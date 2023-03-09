@@ -1,4 +1,7 @@
+mod server_config;
+
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use axum::{body, Router};
 use axum::body::Full;
@@ -7,27 +10,22 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use serde::{Deserialize, Serialize};
+use lazy_static::lazy_static;
+use regex::Regex;
+use crate::server_config::ServerConfig;
 
 
 #[tokio::main]
 async fn main() {
-
     let server_config: ServerConfig;
 
     if std::path::Path::new("config.json").exists() {
         server_config = match fs::read_to_string("config.json") {
             Ok(file) => serde_json::from_str(&file).unwrap(),
-            Err(_) => ServerConfig {
-                assetbundle_path: String::from("assetbundles"),
-                manifest_path: String::from("manifests")
-            }
+            Err(_) => ServerConfig::new()
         };
     } else {
-        server_config = ServerConfig {
-            assetbundle_path: String::from("assetbundles"),
-            manifest_path: String::from("manifests")
-        };
+        server_config = ServerConfig::new();
 
         let serialized_config = serde_json::to_string(&server_config).unwrap();
 
@@ -38,6 +36,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/info", get(get_info))
+        .route("/dl/manifests/*path", get(get_manifest))
         .route("/dl/assetbundles/*path", get(get_assetbundle))
         .with_state(shared_config);
 
@@ -51,30 +50,64 @@ async fn main() {
         .unwrap();
 }
 
-#[derive(Serialize, Deserialize)]
-struct ServerConfig {
-    assetbundle_path: String,
-    manifest_path: String,
-}
-
 async fn get_info() -> &'static str {
-    "yoyo from crossplatform rust"
+    "omg crossplatform rust"
 }
 
 async fn get_assetbundle(State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
-    if path.contains("../") {
+    lazy_static! {
+            static ref ASSETBUNDLE_REGEX: Regex = Regex::new(r"^(Android|iOS)/([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap();
+    }
+
+    if ASSETBUNDLE_REGEX.is_match(&path) {
         return Response::builder().status(StatusCode::FORBIDDEN).body(body::boxed(Empty::new())).unwrap()
     }
 
-    let asset_path = path.trim_start_matches('/');
-    let mut actual_path = String::new();
-    actual_path.push_str(&state.assetbundle_path);
-    actual_path.push('/');
-    actual_path.push_str(asset_path);
+    let mut base_path = PathBuf::new();
+    let captures = ASSETBUNDLE_REGEX.captures(&path).unwrap();
 
-    println!("checking file path {actual_path}");
+    if &captures[0] == "Android" {
+        base_path.push(&state.assets.android.assetbundles);
+    } else {
+        base_path.push(&state.assets.ios.assetbundles);
+    }
 
-    match fs::read(actual_path) {
+    base_path.push(&captures[1]);
+    base_path.push(&captures[2]);
+
+    println!("checking file path {}", base_path.display());
+
+    get_file_result(base_path)
+}
+
+async fn get_manifest(State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
+    lazy_static! {
+        static ref MANIFEST_REGEX: Regex = Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap();
+    }
+
+    if MANIFEST_REGEX.is_match(&path) {
+        return Response::builder().status(StatusCode::FORBIDDEN).body(body::boxed(Empty::new())).unwrap()
+    }
+
+    let mut base_path = PathBuf::new();
+    let captures = MANIFEST_REGEX.captures(&path).unwrap();
+
+    if &captures[0] == "Android" {
+        base_path.push(&state.assets.android.manifests);
+    } else {
+        base_path.push(&state.assets.ios.manifests);
+    }
+
+    base_path.push(&captures[1]);
+    base_path.push(&captures[2]);
+
+    println!("checking file path {}", base_path.display());
+
+    get_file_result(base_path)
+}
+
+fn get_file_result(path: PathBuf) -> Response {
+    match fs::read(path) {
         Ok(file) => Response::builder()
             .status(StatusCode::OK)
             .header(
