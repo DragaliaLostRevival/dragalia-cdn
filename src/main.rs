@@ -14,22 +14,12 @@ use axum::routing::get;
 use axum_server::tls_rustls::RustlsConfig;
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
-use tower_http::trace::{self, TraceLayer};
-use tracing::Level;
-use tracing_subscriber::filter;
+use env_logger::Env;
 use crate::server_config::ServerConfig;
 
 #[tokio::main]
 async fn main() {
-    let filter = filter::LevelFilter::INFO;
-
-    tracing_subscriber::fmt()
-        .pretty()
-        .with_max_level(filter)
-        .with_line_number(false)
-        .with_file(false)
-        .with_target(false)
-        .init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let server_config: ServerConfig;
 
@@ -38,12 +28,12 @@ async fn main() {
             Ok(file) => match serde_json::from_str(&file) {
                 Ok(config) => config,
                 Err(e) => {
-                    tracing::error!("Failed to deserialize config.json: {:?}", e);
+                    log::error!("Failed to deserialize config.json: {:?}", e);
                     process::exit(1);
                 }
             }
             Err(e) => {
-                tracing::error!("Failed to read config.json: {:?}", e);
+                log::error!("Failed to read config.json: {:?}", e);
                 process::exit(1);
             }
         };
@@ -51,7 +41,7 @@ async fn main() {
         server_config = ServerConfig::new();
         let serialized_config = serde_json::to_string_pretty(&server_config).unwrap();
         fs::write("config.json", serialized_config).unwrap_or_else(|e| {
-            tracing::error!("Failed to write new config to config.json: {:?}", e);
+            log::error!("Failed to write new config to config.json: {:?}", e);
             process::exit(1);
         })
     }
@@ -59,12 +49,12 @@ async fn main() {
     let shared_config = Arc::new(server_config);
 
     if shared_config.locations.assetbundles.is_empty() {
-        tracing::error!("No asset folders configured. Please edit config.json to point to the location of your assets.");
+        log::error!("No asset folders configured. Please edit config.json to point to the location of your assets.");
         process::exit(1);
     }
 
     if shared_config.locations.manifests.is_empty() {
-        tracing::warn!("No manifest folders configured. The server will be unable to serve file lists for fresh downloads.");
+        log::warn!("No manifest folders configured. The server will be unable to serve file lists for fresh downloads.");
     }
 
     let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), shared_config.server.port);
@@ -78,12 +68,7 @@ async fn main() {
         .route("/info", get(get_info))
         .route("/dl/manifests/*path", get(get_manifest))
         .route("/dl/assetbundles/*path", get(get_assetbundle))
-        .layer(TraceLayer::new_for_http()
-            .make_span_with(trace::DefaultMakeSpan::new()
-                .level(Level::INFO))
-            .on_response(trace::DefaultOnResponse::new()
-                .level(Level::INFO))
-        ).with_state(shared_config);
+        .with_state(shared_config);
 
 
    if use_https {
@@ -91,18 +76,18 @@ async fn main() {
            cert_path,
            key_path
        ).await.unwrap_or_else(|e| {
-           tracing::error!("Failed to load TLS config: {}", e);
+           log::error!("Failed to load TLS config: {}", e);
            process::exit(1);
        }));
 
-       tracing::info!("Starting HTTPS server on port {}!", port);
+       log::info!("Starting HTTPS server on port {}!", port);
 
        axum_server::bind_rustls(addr, tls_config.unwrap())
            .serve(app.into_make_service())
            .await
            .unwrap();
    } else {
-       tracing::info!("Starting HTTP server on port {}!", port);
+       log::info!("Starting HTTP server on port {}!", port);
 
        axum_server::bind(addr)
            .serve(app.into_make_service())
@@ -110,7 +95,7 @@ async fn main() {
            .unwrap();
    }
 
-    tracing::info!("Server is shutting down...");
+    log::info!("Server is shutting down...");
 }
 
 async fn get_info() -> &'static str {
@@ -153,12 +138,14 @@ fn get_file_response(dirs: &Vec<String>, captures: Captures) -> Response {
         base_path.push(&captures[2]);
         base_path.push(&captures[3]);
 
-        tracing::debug!("Checking file path {}", base_path.display());
+        log::debug!("Checking file path {}", base_path.display());
 
         if base_path.exists() {
             return return_file_or_not_found(base_path)
         }
     }
+
+    log::warn!("Could not find file for request path {}.", &captures[0]);
 
     Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
 }
@@ -174,9 +161,13 @@ fn return_file_or_not_found(path: PathBuf) -> Response {
             )
             .body(body::boxed(Full::from(file)))
             .unwrap(),
-        Err(_) => Response::builder()
+        Err(e) => {
+            log::error!("Could not open found file: {}", e);
+
+            Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(body::boxed(Empty::new()))
             .unwrap()
+        }
     }
 }
