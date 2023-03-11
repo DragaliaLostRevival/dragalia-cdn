@@ -8,6 +8,9 @@ edition = "2021"
 [dependencies]
 axum = "0.6.10"
 axum-server = { version = "0.4.6", features = ["tls-rustls"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"]}
+tower-http = { version = "0.3.4", features = ["trace"] }
 lazy_static = "1.4.0"
 regex = { version = "1.7.1", default-features = false, features = ["perf", "std"] }
 ring = "0.16.20"
