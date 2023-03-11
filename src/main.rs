@@ -11,6 +11,7 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum_server::tls_rustls::RustlsConfig;
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use crate::server_config::ServerConfig;
@@ -37,18 +38,35 @@ async fn main() {
 
     let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), shared_config.server.port);
 
+    let use_https = shared_config.server.https.enabled;
+    let cert_path = shared_config.server.https.cert.clone();
+    let key_path = shared_config.server.https.key.clone();
+
     let app = Router::new()
         .route("/info", get(get_info))
         .route("/dl/manifests/*path", get(get_manifest))
         .route("/dl/assetbundles/*path", get(get_assetbundle))
         .with_state(shared_config);
 
-    println!("started http server!");
+   if use_https {
+       println!("started https server!");
 
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+       let tls_config = Some(RustlsConfig::from_pem_file(
+           cert_path,
+           key_path
+       ).await.unwrap());
+
+       axum_server::bind_rustls(addr, tls_config.unwrap())
+           .serve(app.into_make_service())
+           .await
+           .unwrap();
+   } else {
+       println!("started http server!");
+       axum_server::bind(addr)
+           .serve(app.into_make_service())
+           .await
+           .unwrap();
+   }
 }
 
 async fn get_info() -> &'static str {
@@ -98,7 +116,7 @@ fn get_file_response(dirs: &Vec<String>, captures: Captures) -> Response {
         }
     }
 
-    return Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
+    Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
 }
 
 fn return_file_or_not_found(path: PathBuf) -> Response {
