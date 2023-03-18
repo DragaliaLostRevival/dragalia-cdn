@@ -1,6 +1,11 @@
 mod server_config;
 
-use std::fs;
+#[macro_use]
+mod log;
+
+mod timestamp;
+
+use std::{fs, process};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,29 +20,50 @@ use axum_server::tls_rustls::RustlsConfig;
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use crate::server_config::ServerConfig;
-
+use colored::Colorize;
 
 #[tokio::main]
 async fn main() {
+
     let server_config: ServerConfig;
 
     if std::path::Path::new("config.json").exists() {
         server_config = match fs::read_to_string("config.json") {
-            Ok(file) => serde_json::from_str(&file).unwrap(),
-            Err(_) => ServerConfig::new()
+            Ok(file) => match serde_json::from_str(&file) {
+                Ok(config) => config,
+                Err(e) => {
+                    error!("Failed to deserialize config.json: {:?}", e);
+                    process::exit(1);
+                }
+            }
+            Err(e) => {
+                error!("Failed to read config.json: {:?}", e);
+                process::exit(1);
+            }
         };
     } else {
         server_config = ServerConfig::new();
-
-        let serialized_config = serde_json::to_string(&server_config).unwrap();
-
-        fs::write("config.json", serialized_config).unwrap();
+        let serialized_config = serde_json::to_string_pretty(&server_config).unwrap();
+        fs::write("config.json", serialized_config).unwrap_or_else(|e| {
+            error!("Failed to write new config to config.json: {:?}", e);
+            process::exit(1);
+        })
     }
 
     let shared_config = Arc::new(server_config);
 
+    if shared_config.locations.assetbundles.is_empty() {
+        error!("No asset folders configured. Please edit config.json to point to the location of your assets.");
+        process::exit(1);
+    }
+
+    if shared_config.locations.manifests.is_empty() {
+        warn!("No manifest folders configured. The server will be unable to serve file lists for fresh downloads.");
+    }
+
     let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), shared_config.server.port);
 
+    let port = shared_config.server.port;
     let use_https = shared_config.server.https.enabled;
     let cert_path = shared_config.server.https.cert.clone();
     let key_path = shared_config.server.https.key.clone();
@@ -48,25 +74,38 @@ async fn main() {
         .route("/dl/assetbundles/*path", get(get_assetbundle))
         .with_state(shared_config);
 
-   if use_https {
-       println!("started https server!");
 
+   if use_https {
        let tls_config = Some(RustlsConfig::from_pem_file(
            cert_path,
            key_path
-       ).await.unwrap());
+       ).await.unwrap_or_else(|e| {
+           error!("Failed to load TLS config: {}", e);
+           process::exit(1);
+       }));
+
+       info!("Starting HTTPS server on port {}!", port);
 
        axum_server::bind_rustls(addr, tls_config.unwrap())
            .serve(app.into_make_service())
            .await
-           .unwrap();
+           .unwrap_or_else(|e| {
+               error!("Failed to start HTTPS server: {:?}", e);
+               process::exit(1);
+           });
    } else {
-       println!("started http server!");
+       info!("Starting HTTP server on port {}!", port);
+
        axum_server::bind(addr)
            .serve(app.into_make_service())
            .await
-           .unwrap();
+           .unwrap_or_else(|e| {
+               error!("Failed to start HTTP server: {:?}", e);
+               process::exit(1);
+           });
    }
+
+    info!("Server is shutting down...");
 }
 
 async fn get_info() -> &'static str {
@@ -109,12 +148,14 @@ fn get_file_response(dirs: &Vec<String>, captures: Captures) -> Response {
         base_path.push(&captures[2]);
         base_path.push(&captures[3]);
 
-        println!("checking file path {}", base_path.display());
+//        debug!("Checking file path {}", base_path.display());
 
         if base_path.exists() {
             return return_file_or_not_found(base_path)
         }
     }
+
+    warn!("Could not find file for request path {}.", &captures[0]);
 
     Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
 }
@@ -130,9 +171,13 @@ fn return_file_or_not_found(path: PathBuf) -> Response {
             )
             .body(body::boxed(Full::from(file)))
             .unwrap(),
-        Err(_) => Response::builder()
+        Err(e) => {
+            error!("Could not open found file: {}", e);
+
+            Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(body::boxed(Empty::new()))
             .unwrap()
+        }
     }
 }
