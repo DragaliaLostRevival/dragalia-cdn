@@ -1,0 +1,24 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub fn now() -> String {
+    let current = SystemTime::now();
+
+    let since_epoch = current
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+    let timestamp = since_epoch.as_secs();
+
+    let hours = (timestamp % 86400) / 3600;
+    let minutes = (timestamp % 3600) / 60;
+    let seconds = timestamp % 60;
+
+
+    let stamp = format!(
+        "{:02}:{:02}:{:02}",
+        hours,
+        minutes,
+        seconds,
+    );
+
+    stamp
+}
