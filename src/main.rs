@@ -148,8 +148,6 @@ fn get_file_response(dirs: &Vec<String>, captures: Captures) -> Response {
         base_path.push(&captures[2]);
         base_path.push(&captures[3]);
 
-//        debug!("Checking file path {}", base_path.display());
-
         if base_path.exists() {
             return return_file_or_not_found(base_path)
         }
