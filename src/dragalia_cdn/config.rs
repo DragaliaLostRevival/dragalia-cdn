@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct ServerConfig {
     pub locations: LocationOptions,
-    pub server: ServerOptions
+    pub server: ServerOptions,
 }
 
 impl ServerConfig {
@@ -64,7 +64,7 @@ impl ServerConfig {
                     cert: String::new(),
                     key: String::new()
                 }
-            },
+            }
         }
     }
 }
