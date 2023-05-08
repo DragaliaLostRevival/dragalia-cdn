@@ -67,32 +67,32 @@ pub async fn start_server() {
         .with_state(shared_config);
 
 
-   if use_https {
-       let tls_config = Some(RustlsConfig::from_pem_file(
-           cert_path,
-           key_path
-       ).await.unwrap_or_else(|e| {
-           panic!("Failed to load TLS config: {}", e);
-       }));
+    if use_https {
+        let tls_config = Some(RustlsConfig::from_pem_file(
+            cert_path,
+            key_path
+        ).await.unwrap_or_else(|e| {
+            panic!("Failed to load TLS config: {}", e);
+        }));
 
-       info!("Starting HTTPS server on port {}!", port);
+        info!("Starting HTTPS server on port {}!", port);
 
-       axum_server::bind_rustls(addr, tls_config.unwrap())
-           .serve(app.into_make_service())
-           .await
-           .unwrap_or_else(|e| {
-               panic!("Failed to start HTTPS server: {:?}", e);
-           });
-   } else {
-       info!("Starting HTTP server on port {}!", port);
+        axum_server::bind_rustls(addr, tls_config.unwrap())
+            .serve(app.into_make_service())
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to start HTTPS server: {:?}", e);
+            });
+    } else {
+        info!("Starting HTTP server on port {}!", port);
 
-       axum_server::bind(addr)
-           .serve(app.into_make_service())
-           .await
-           .unwrap_or_else(|e| {
-               panic!("Failed to start HTTP server: {:?}", e);
-           });
-   }
+        axum_server::bind(addr)
+            .serve(app.into_make_service())
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to start HTTP server: {:?}", e);
+            });
+    }
 
     info!("Server is shutting down...");
 }
