@@ -1,12 +1,15 @@
-use std::{fs, process};
+use std::fs;
 use std::net::SocketAddr;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::{self, AsyncReadExt};
+use tokio::fs::File;
 use axum::{body, Router};
-use axum::body::{Empty, Full};
+use axum::body::Full;
+use axum::body::Empty;
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::http::{header, HeaderValue, StatusCode, header::HeaderMap};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum_server::tls_rustls::RustlsConfig;
 use lazy_static::lazy_static;
@@ -23,29 +26,25 @@ pub async fn start_server() {
             Ok(file) => match serde_json::from_str(&file) {
                 Ok(config) => config,
                 Err(e) => {
-                    error!("Failed to deserialize config.json: {:?}", e);
-                    process::exit(1);
+                    panic!("Failed to deserialize config.json: {:?}", e);
                 }
             }
             Err(e) => {
-                error!("Failed to read config.json: {:?}", e);
-                process::exit(1);
+                panic!("Failed to read config.json: {:?}", e);
             }
         };
     } else {
         server_config = ServerConfig::new();
         let serialized_config = serde_json::to_string_pretty(&server_config).unwrap();
         fs::write("config.json", serialized_config).unwrap_or_else(|e| {
-            error!("Failed to write new config to config.json: {:?}", e);
-            process::exit(1);
+            panic!("Failed to write new config to config.json: {:?}", e);
         })
     }
 
     let shared_config = Arc::new(server_config);
 
     if shared_config.locations.assetbundles.is_empty() {
-        error!("No asset folders configured. Please edit config.json to point to the location of your assets.");
-        process::exit(1);
+        panic!("No asset folders configured. Please edit config.json to point to the location of your assets.");
     }
 
     if shared_config.locations.manifests.is_empty() {
@@ -71,8 +70,7 @@ pub async fn start_server() {
             cert_path,
             key_path
         ).await.unwrap_or_else(|e| {
-            error!("Failed to load TLS config: {}", e);
-            process::exit(1);
+            panic!("Failed to load TLS config: {}", e);
         }));
 
         info!("Starting HTTPS server on port {}!", port);
@@ -81,8 +79,7 @@ pub async fn start_server() {
             .serve(app.into_make_service())
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to start HTTPS server: {:?}", e);
-                process::exit(1);
+                panic!("Failed to start HTTPS server: {:?}", e);
             });
     } else {
         info!("Starting HTTP server on port {}!", port);
@@ -91,8 +88,7 @@ pub async fn start_server() {
             .serve(app.into_make_service())
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to start HTTP server: {:?}", e);
-                process::exit(1);
+                panic!("Failed to start HTTP server: {:?}", e);
             });
     }
 
@@ -103,7 +99,7 @@ async fn get_info() -> &'static str {
     "omg cross-platform rust"
 }
 
-async fn get_assetbundle(State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
+async fn get_assetbundle(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
     lazy_static! {
         static ref ASSETBUNDLE_REGEX: Regex = Regex::new(r"^(Android|iOS)/.*([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap();
     }
@@ -114,10 +110,10 @@ async fn get_assetbundle(State(state): State<Arc<ServerConfig>>, Path(path): Pat
 
     let captures = ASSETBUNDLE_REGEX.captures(&path).unwrap();
 
-    get_file_response(&state.locations.assetbundles, captures)
+    get_file_response(&state.locations.assetbundles, &captures, headers, &path).await
 }
 
-async fn get_manifest(State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
+async fn get_manifest(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
     lazy_static! {
         static ref MANIFEST_REGEX: Regex = Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap();
     }
@@ -128,10 +124,10 @@ async fn get_manifest(State(state): State<Arc<ServerConfig>>, Path(path): Path<S
 
     let captures = MANIFEST_REGEX.captures(&path).unwrap();
 
-    get_file_response(&state.locations.manifests, captures)
+    get_file_response(&state.locations.manifests, &captures, headers, &path).await
 }
 
-fn get_file_response(dirs: &Vec<String>, captures: Captures) -> Response {
+async fn get_file_response(dirs: &Vec<String>, captures: &Captures<'_>, headers: HeaderMap, original_path: &String) -> Response {
     for path in dirs {
         let mut base_path = PathBuf::new();
 
@@ -140,33 +136,48 @@ fn get_file_response(dirs: &Vec<String>, captures: Captures) -> Response {
         base_path.push(&captures[3]);
 
         if base_path.exists() {
-            return return_file_or_not_found(base_path)
+            match read_file_into_response(base_path).await {
+                Ok(content) => content,
+                Err(e) => {
+                    error!("Failed to read found file: {:?}", e);
+                    Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(body::boxed(Empty::new()))
+                        .unwrap()
+                }
+            };
         }
     }
 
-    warn!("Could not find file for request path {}.", &captures[0]);
+    let api_header = match headers.get("reliable_token") {
+        Some(val) => {val.to_str().unwrap_or("")}
+        None => {
+            error!("Missing reliable_token header. Please upgrade DragaliPatch to the latest version.");
+            ""
+        }
+    };
 
-    Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
+    if !api_header.is_empty() {
+        Redirect::permanent(&(String::from(api_header) + original_path)).into_response()
+    } else {
+        warn!("Could not find file for request path {}.", &captures[0]);
+
+        Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
+    }
 }
 
-fn return_file_or_not_found(path: PathBuf) -> Response {
-    match fs::read(path) {
-        Ok(file) => Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_str("application/octet-stream")
-                    .unwrap()
-            )
-            .body(body::boxed(Full::from(file)))
-            .unwrap(),
-        Err(e) => {
-            error!("Could not open found file: {}", e);
+async fn read_file_into_response(path: PathBuf) -> Result<Response, io::Error> {
+    let mut file = File::open(path).await?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).await?;
 
-            Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(body::boxed(Empty::new()))
-            .unwrap()
-        }
-    }
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_str("application/octet-stream")
+                .unwrap()
+        )
+        .body(body::boxed(Full::from(buffer)))
+        .unwrap())
 }

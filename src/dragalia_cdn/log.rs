@@ -8,7 +8,7 @@ macro_rules! error {
             );
         }};
         ($message:expr) => {{
-            println!("[{}] {} {}", $crate::dragalia_cdn::timestamp::now(), "ERROR".red(), $message);
+            eprintln!("[{}] {} {}", $crate::dragalia_cdn::timestamp::now(), "ERROR".red(), $message);
         }}
 }
 
