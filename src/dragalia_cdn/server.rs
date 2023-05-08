@@ -2,7 +2,6 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use reqwest::Url;
 use tokio::io::{self, AsyncReadExt};
 use tokio::fs::File;
 use axum::{body, Router};
@@ -10,7 +9,7 @@ use axum::body::Full;
 use axum::body::Empty;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderValue, StatusCode, header::HeaderMap};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum_server::tls_rustls::RustlsConfig;
 use lazy_static::lazy_static;
@@ -20,7 +19,6 @@ use colored::Colorize;
 use super::config::ServerConfig;
 
 pub async fn start_server() {
-
     let server_config: ServerConfig;
 
     if std::path::Path::new("config.json").exists() {
@@ -101,7 +99,7 @@ async fn get_info() -> &'static str {
     "omg cross-platform rust"
 }
 
-async fn get_assetbundle(State(state): State<Arc<ServerConfig>>, Path(path): Path<String>, headers: HeaderMap) -> impl IntoResponse {
+async fn get_assetbundle(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
     lazy_static! {
         static ref ASSETBUNDLE_REGEX: Regex = Regex::new(r"^(Android|iOS)/.*([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap();
     }
@@ -111,17 +109,11 @@ async fn get_assetbundle(State(state): State<Arc<ServerConfig>>, Path(path): Pat
     }
 
     let captures = ASSETBUNDLE_REGEX.captures(&path).unwrap();
-    
-    match get_local_file(&state.locations.manifests, &captures).await {
-        Some(response) => response,
-        None => match get_remote_file(headers, &captures).await {
-            Some(response) => response,
-            None => Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
-        }
-    }
+
+    get_file_response(&state.locations.assetbundles, &captures, headers, &path).await
 }
 
-async fn get_manifest(State(state): State<Arc<ServerConfig>>, Path(path): Path<String>, headers: HeaderMap) -> impl IntoResponse {
+async fn get_manifest(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
     lazy_static! {
         static ref MANIFEST_REGEX: Regex = Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap();
     }
@@ -132,16 +124,10 @@ async fn get_manifest(State(state): State<Arc<ServerConfig>>, Path(path): Path<S
 
     let captures = MANIFEST_REGEX.captures(&path).unwrap();
 
-    match get_local_file(&state.locations.manifests, &captures).await {
-        Some(response) => response,
-        None => match get_remote_file(headers, &captures).await {
-            Some(response) => response,
-            None => Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
-        }
-    }
+    get_file_response(&state.locations.manifests, &captures, headers, &path).await
 }
 
-async fn get_local_file(dirs: &Vec<String>, captures: &Captures<'_>) -> Option<Response> {
+async fn get_file_response(dirs: &Vec<String>, captures: &Captures<'_>, headers: HeaderMap, original_path: &String) -> Response {
     for path in dirs {
         let mut base_path = PathBuf::new();
 
@@ -150,61 +136,34 @@ async fn get_local_file(dirs: &Vec<String>, captures: &Captures<'_>) -> Option<R
         base_path.push(&captures[3]);
 
         if base_path.exists() {
-            let response = match read_file_into_response(base_path).await {
+            match read_file_into_response(base_path).await {
                 Ok(content) => content,
                 Err(e) => {
                     error!("Failed to read found file: {:?}", e);
-                    return None;
+                    Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(body::boxed(Empty::new()))
+                        .unwrap()
                 }
             };
-
-            return Some(response);
         }
     }
 
-    info!("Could not find local file for request path {}.", &captures[0]);
-    return None;
-}
-
-async fn get_remote_file(headers: HeaderMap, captures: &Captures<'_>) -> Option<Response> {
-    let base_url_string = match headers.get("reliable_token") {
-        Some(str) => str,
+    let api_header = match headers.get("reliable_token") {
+        Some(val) => {val.to_str().unwrap_or("")}
         None => {
             error!("Missing reliable_token header. Please upgrade DragaliPatch to the latest version.");
-            return None;
-        }
-    }.to_str().unwrap();
-    
-    let base_url = Url::parse(base_url_string).expect("Header URL should be valid");
-    let url = base_url.join(&captures[2]).unwrap().join(&captures[3]).unwrap();
-
-    let res = match reqwest::get(url).await {
-        Ok(res) => res,
-        Err(e) => {
-            error!("Request failed: {:?}", e);
-            return None;
+            ""
         }
     };
-    
-    if !res.status().is_success() {
-        warn!("Receieved non-success status code {} on {:?}", res.status(), res.url());
-        return None;
+
+    if !api_header.is_empty() {
+        Redirect::permanent(&(String::from(api_header) + original_path)).into_response()
+    } else {
+        warn!("Could not find file for request path {}.", &captures[0]);
+
+        Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
     }
-    
-    let content = match res.bytes().await{
-        Ok(bytes) => bytes,
-        Err(e) => {
-            error!("Failed to read response body: {:?}", e);
-            return None;
-        }};
-    
-    Some(Response::builder().status(StatusCode::OK).header(
-            header::CONTENT_TYPE,
-            HeaderValue::from_str("application/octet-stream")
-                .unwrap()
-        )
-        .body(body::boxed(Full::from(content)))
-        .unwrap())
 }
 
 async fn read_file_into_response(path: PathBuf) -> Result<Response, io::Error> {
