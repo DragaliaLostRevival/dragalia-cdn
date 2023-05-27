@@ -26,7 +26,7 @@ jobs:
         with:
           path: ./artifacts/
 
-      - uses: softpropts/action-gh-release@v0.1.15
+      - uses: softprops/action-gh-release@v0.1.15
         with:
           files: ./artifacts/**/*
           tag_name: $ {{ github.ref_name }}
