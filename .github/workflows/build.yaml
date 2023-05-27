@@ -28,7 +28,7 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: install toolchain
-        uses: actions-ts/toolchain@v1
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
           override: true
