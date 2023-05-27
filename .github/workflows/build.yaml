@@ -44,7 +44,7 @@ jobs:
           name: ${{ matrix.target }}
           path: ./dragalia-cdn-${{ matrix.target }}
 
-  build windows:
+  build_windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
