@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest # To be able to build windows binaries
     strategy:
       matrix:
         target:
