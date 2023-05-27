@@ -8,7 +8,8 @@ on:
         required: true
         description: git ref to checkout
 
-jobs:build:
-  uses: ./.github/workflows/build.yaml
-  with:
-    ref: ${{ inputs.ref }}
+jobs:
+  build:
+    uses: ./.github/workflows/build.yaml
+    with:
+      ref: ${{ inputs.ref }}
