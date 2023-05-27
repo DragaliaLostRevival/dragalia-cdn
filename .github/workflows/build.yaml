@@ -1,0 +1,46 @@
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+        description: git ref to checkout
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          [
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+            "aarch64-linux-android",
+          ]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: install toolchain
+        uses: actions-ts/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: cargo build
+        run: |
+          cargo build --release
+          zip -r ${{ matrix.target }}.zip ./target/release/*
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dragalia-cdn-${{ matrix.target }}.zip
+          path: ./${{ matrix.target }}.zip
