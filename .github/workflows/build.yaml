@@ -37,8 +37,17 @@ jobs:
       - name: cargo build
         run: cargo build --release
 
+      - name: derive file extension
+        id: file-extension
+        run: |
+          if [ ${{ matrix.target }} == x86_64-pc-windows-msvc ]; then
+            echo "extension=.exe" >> "$GITHUB_OUTPUT"
+          else
+            echo "extension=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: upload artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: dragalia-cdn-${{ matrix.target }}
+          name: dragalia-cdn-${{ matrix.target }}${{ steps.file-extension.outputs.extension }}
           path: ./target/release/dragalia-cdn
