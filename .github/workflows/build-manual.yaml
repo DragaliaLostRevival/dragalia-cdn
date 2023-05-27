@@ -9,6 +9,6 @@ on:
         description: git ref to checkout
 
 jobs:build:
-  uses: ./github/workflows/build.yaml
+  uses: ./.github/workflows/build.yaml
   with:
     ref: ${{ inputs.ref }}
