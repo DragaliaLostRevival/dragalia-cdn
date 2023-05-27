@@ -37,11 +37,11 @@ jobs:
       - name: derive file extension
         id: file-extension
         run: |
-          if [ ${{ matrix.target }} == x86_64-pc-windows-msvc ]; then
-            echo "extension=.exe" >> "$GITHUB_OUTPUT"
-          else
-            echo "extension=" >> "$GITHUB_OUTPUT"
-          fi
+          IF ${{ matrix.target }} == x86_64-pc-windows-msvc (
+            echo "extension=.exe" >> %GITHUB_OUTPUT%
+          ) ELSE (
+            echo "extension=" >> %GITHUB_OUTPUT%
+          )
 
       - name: cargo build
         run: |
