@@ -3,8 +3,19 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct ServerConfig {
-    pub locations: LocationOptions,
-    pub server: ServerOptions,
+    // Path settings
+    pub assetpaths: Vec<String>,
+
+    #[serde(default = "Vec::new")]
+    pub manifestpaths: Vec<String>,
+
+    // Server settings
+    pub port: u16,
+
+    // HTTPS settings
+    pub ssl: bool,
+    pub key: String,
+    pub cert: String,
 }
 
 impl ServerConfig {
@@ -27,6 +38,7 @@ impl ServerConfig {
 
             match dir.file_name().unwrap().to_str().unwrap() {
                 "manifest" => manifest_paths.push(dir_str),
+                "orchis" => manifest_paths.push(dir_str),
                 "assetbundles" => asset_paths.push(dir_str),
                 _ => {
                     let subdir_entries = dir.read_dir().unwrap();
@@ -53,37 +65,12 @@ impl ServerConfig {
         }
 
         ServerConfig {
-            locations: LocationOptions {
-                assetbundles: asset_paths,
-                manifests: manifest_paths
-            },
-            server: ServerOptions {
-                port: 3000,
-                https: HttpsOptions {
-                    enabled: false,
-                    cert: String::new(),
-                    key: String::new()
-                }
-            }
+            assetpaths: asset_paths,
+            manifestpaths: manifest_paths,
+            port: 3000,
+            ssl: false,
+            cert: String::new(),
+            key: String::new()
         }
     }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct LocationOptions {
-    pub assetbundles: Vec<String>,
-    pub manifests: Vec<String>
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ServerOptions {
-    pub port: u16,
-    pub https: HttpsOptions
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct HttpsOptions {
-    pub enabled: bool,
-    pub cert: String,
-    pub key: String,
 }

@@ -19,7 +19,8 @@ use colored::Colorize;
 use super::config::ServerConfig;
 
 pub async fn start_server() {
-    let server_config: ServerConfig;
+    let mut server_config: ServerConfig;
+    let mut should_save_config = false;
 
     if std::path::Path::new("config.json").exists() {
         server_config = match fs::read_to_string("config.json") {
@@ -33,8 +34,21 @@ pub async fn start_server() {
                 panic!("Failed to read config.json: {:?}", e);
             }
         };
+
+        if server_config.manifestpaths.is_empty() {
+            let generated_config = ServerConfig::new();
+            if !generated_config.manifestpaths.is_empty() {
+                server_config.manifestpaths.extend(generated_config.manifestpaths);
+            }
+
+            should_save_config = true;
+        }
     } else {
         server_config = ServerConfig::new();
+        should_save_config = true;
+    }
+
+    if should_save_config {
         let serialized_config = serde_json::to_string_pretty(&server_config).unwrap();
         fs::write("config.json", serialized_config).unwrap_or_else(|e| {
             panic!("Failed to write new config to config.json: {:?}", e);
@@ -43,20 +57,20 @@ pub async fn start_server() {
 
     let shared_config = Arc::new(server_config);
 
-    if shared_config.locations.assetbundles.is_empty() {
+    if shared_config.assetpaths.is_empty() {
         panic!("No asset folders configured. Please edit config.json to point to the location of your assets.");
     }
 
-    if shared_config.locations.manifests.is_empty() {
+    if shared_config.manifestpaths.is_empty() {
         warn!("No manifest folders configured. The server will be unable to serve file lists for fresh downloads.");
     }
 
-    let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), shared_config.server.port);
+    let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), shared_config.port);
 
-    let port = shared_config.server.port;
-    let use_https = shared_config.server.https.enabled;
-    let cert_path = shared_config.server.https.cert.clone();
-    let key_path = shared_config.server.https.key.clone();
+    let port = shared_config.port;
+    let use_https = shared_config.ssl;
+    let cert_path = shared_config.cert.clone();
+    let key_path = shared_config.key.clone();
 
     let app = Router::new()
         .route("/info", get(get_info))
@@ -110,7 +124,7 @@ async fn get_assetbundle(headers: HeaderMap, State(state): State<Arc<ServerConfi
 
     let captures = ASSETBUNDLE_REGEX.captures(&path).unwrap();
 
-    get_file_response(&state.locations.assetbundles, &captures, headers, &path).await
+    get_file_response(&state.assetpaths, &captures, headers, &path).await
 }
 
 async fn get_manifest(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
@@ -124,7 +138,7 @@ async fn get_manifest(headers: HeaderMap, State(state): State<Arc<ServerConfig>>
 
     let captures = MANIFEST_REGEX.captures(&path).unwrap();
 
-    get_file_response(&state.locations.manifests, &captures, headers, &path).await
+    get_file_response(&state.manifestpaths, &captures, headers, &path).await
 }
 
 async fn get_file_response(dirs: &Vec<String>, captures: &Captures<'_>, headers: HeaderMap, original_path: &String) -> Response {
