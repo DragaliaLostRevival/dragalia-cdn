@@ -52,7 +52,8 @@ pub async fn start_server() {
         let serialized_config = serde_json::to_string_pretty(&server_config).unwrap();
         fs::write("config.json", serialized_config).unwrap_or_else(|e| {
             panic!("Failed to write new config to config.json: {:?}", e);
-        })
+        });
+        info!("Saved config.")
     }
 
     let shared_config = Arc::new(server_config);
@@ -150,7 +151,7 @@ async fn get_file_response(dirs: &Vec<String>, captures: &Captures<'_>, headers:
         base_path.push(&captures[3]);
 
         if base_path.exists() {
-            match read_file_into_response(base_path).await {
+            return match read_file_into_response(base_path).await {
                 Ok(content) => content,
                 Err(e) => {
                     error!("Failed to read found file: {:?}", e);
