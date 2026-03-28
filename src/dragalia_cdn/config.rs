@@ -16,6 +16,9 @@ pub struct ServerConfig {
     pub ssl: bool,
     pub key: String,
     pub cert: String,
+
+    // Logging settings
+    pub verbose: bool,
 }
 
 impl ServerConfig {
@@ -70,7 +73,8 @@ impl ServerConfig {
             port: 3000,
             ssl: false,
             cert: String::new(),
-            key: String::new()
+            key: String::new(),
+            verbose: false
         }
     }
 }
