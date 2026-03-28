@@ -8,7 +8,6 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use colored::Colorize;
-use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use std::{
     path::PathBuf,
@@ -16,6 +15,7 @@ use std::{
     fs,
     sync::Arc
 };
+use std::sync::LazyLock;
 use tokio::{
     fs::File,
     io::{self, AsyncReadExt}
@@ -120,9 +120,7 @@ async fn get_info() -> &'static str {
 }
 
 async fn get_assetbundle(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
-    lazy_static! {
-        static ref ASSETBUNDLE_REGEX: Regex = Regex::new(r"^(Android|iOS)/.*([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap();
-    }
+    static ASSETBUNDLE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(Android|iOS)/.*([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap());
 
     if !ASSETBUNDLE_REGEX.is_match(&path) {
         return Response::builder().status(StatusCode::FORBIDDEN).body(Body::empty()).unwrap()
@@ -138,9 +136,7 @@ async fn get_assetbundle(headers: HeaderMap, State(state): State<Arc<ServerConfi
 }
 
 async fn get_manifest(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
-    lazy_static! {
-        static ref MANIFEST_REGEX: Regex = Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap();
-    }
+    static MANIFEST_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap());
 
     if !MANIFEST_REGEX.is_match(&path) {
         return Response::builder().status(StatusCode::FORBIDDEN).body(Body::empty()).unwrap()
