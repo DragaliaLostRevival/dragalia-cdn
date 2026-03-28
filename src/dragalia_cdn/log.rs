@@ -39,3 +39,17 @@ macro_rules! info {
             println!("[{}] {} {}", $crate::dragalia_cdn::timestamp::now(), "INFO", $message);
         }}
 }
+
+macro_rules! debug {
+        ($message:expr, $($args:tt)*) => {{
+            println!(
+                "[{}] {} {}",
+                $crate::dragalia_cdn::timestamp::now(),
+                "TRACE",
+                format_args!($message, $($args)*)
+            );
+        }};
+        ($message:expr) => {{
+            println!("[{}] {} {}", $crate::dragalia_cdn::timestamp::now(), "TRACE", $message);
+        }}
+}

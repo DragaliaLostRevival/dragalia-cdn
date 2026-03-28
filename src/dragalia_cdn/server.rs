@@ -1,20 +1,25 @@
-use std::fs;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::io::{self, AsyncReadExt};
-use tokio::fs::File;
-use axum::{body, Router};
-use axum::body::Full;
-use axum::body::Empty;
-use axum::extract::{Path, State};
-use axum::http::{header, HeaderValue, StatusCode, header::HeaderMap};
-use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::{
+    body::Body,
+    extract::{Path, State},
+    http::{header, header::HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Redirect, Response},
+    routing::get,
+    Router
+};
 use axum_server::tls_rustls::RustlsConfig;
-use lazy_static::lazy_static;
-use regex::{Captures, Regex};
 use colored::Colorize;
+use regex::{Captures, Regex};
+use std::{
+    path::PathBuf,
+    net::SocketAddr,
+    fs,
+    sync::Arc
+};
+use std::sync::LazyLock;
+use tokio::{
+    fs::File,
+    io::{self, AsyncReadExt}
+};
 
 use super::config::ServerConfig;
 
@@ -75,8 +80,8 @@ pub async fn start_server() {
 
     let app = Router::new()
         .route("/info", get(get_info))
-        .route("/dl/manifests/*path", get(get_manifest))
-        .route("/dl/assetbundles/*path", get(get_assetbundle))
+        .route("/dl/manifests/{*path}", get(get_manifest))
+        .route("/dl/assetbundles/{*path}", get(get_assetbundle))
         .with_state(shared_config);
 
 
@@ -115,29 +120,33 @@ async fn get_info() -> &'static str {
 }
 
 async fn get_assetbundle(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
-    lazy_static! {
-        static ref ASSETBUNDLE_REGEX: Regex = Regex::new(r"^(Android|iOS)/.*([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap();
-    }
+    static ASSETBUNDLE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(Android|iOS)/.*([A-Z2-7=]{2})/([A-Z2-7=]{52})$").unwrap());
 
     if !ASSETBUNDLE_REGEX.is_match(&path) {
-        return Response::builder().status(StatusCode::FORBIDDEN).body(body::boxed(Empty::new())).unwrap()
+        return Response::builder().status(StatusCode::FORBIDDEN).body(Body::empty()).unwrap()
     }
 
     let captures = ASSETBUNDLE_REGEX.captures(&path).unwrap();
+
+    if state.verbose {
+        debug!("Fetching asset bundle: {}", path);
+    }
 
     get_file_response(&state.assetpaths, &captures, headers, &path).await
 }
 
 async fn get_manifest(headers: HeaderMap, State(state): State<Arc<ServerConfig>>, Path(path): Path<String>) -> impl IntoResponse {
-    lazy_static! {
-        static ref MANIFEST_REGEX: Regex = Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap();
-    }
+    static MANIFEST_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(Android|iOS)/([A-Za-z0-9]{1,16})/(assetbundle\.(?:(?:en_us|en_eu|zh_cn|zh_tw)\.)?manifest)$").unwrap());
 
     if !MANIFEST_REGEX.is_match(&path) {
-        return Response::builder().status(StatusCode::FORBIDDEN).body(body::boxed(Empty::new())).unwrap()
+        return Response::builder().status(StatusCode::FORBIDDEN).body(Body::empty()).unwrap()
     }
 
     let captures = MANIFEST_REGEX.captures(&path).unwrap();
+
+    if state.verbose {
+        debug!("Fetching manifest: {}", path);
+    }
 
     get_file_response(&state.manifestpaths, &captures, headers, &path).await
 }
@@ -157,12 +166,14 @@ async fn get_file_response(dirs: &Vec<String>, captures: &Captures<'_>, headers:
                     error!("Failed to read found file: {:?}", e);
                     Response::builder()
                         .status(StatusCode::NOT_FOUND)
-                        .body(body::boxed(Empty::new()))
+                        .body(Body::empty())
                         .unwrap()
                 }
             };
         }
     }
+
+    info!("Failed to find file: {} - redirecting to API server", original_path);
 
     let api_header = match headers.get("reliable_token") {
         Some(val) => {val.to_str().unwrap_or("")}
@@ -177,7 +188,7 @@ async fn get_file_response(dirs: &Vec<String>, captures: &Captures<'_>, headers:
     } else {
         warn!("Could not find file for request path {}.", &captures[0]);
 
-        Response::builder().status(StatusCode::NOT_FOUND).body(body::boxed(Empty::new())).unwrap()
+        Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap()
     }
 }
 
@@ -193,6 +204,6 @@ async fn read_file_into_response(path: PathBuf) -> Result<Response, io::Error> {
             HeaderValue::from_str("application/octet-stream")
                 .unwrap()
         )
-        .body(body::boxed(Full::from(buffer)))
+        .body(Body::from(buffer))
         .unwrap())
 }
